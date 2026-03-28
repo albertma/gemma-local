@@ -44,7 +44,7 @@ class LLMService: ObservableObject {
             type: .vlm
         ),
     ]
-
+    
     // MARK: - Published State
 
     @Published var isLoading = false
@@ -196,12 +196,10 @@ class LLMService: ObservableObject {
                 return errorMsg
             }
 
-            // 使用正确的 VLM API：UserInput(prompt:images:) 
-            // prompt 参数需要是 UserInput.Prompt 类型，使用 .text() 包装
-            // 参考：https://github.com/ml-explore/mlx-swift-examples/releases
             let userInput = UserInput(
-                prompt: .text(prompt),
-                images: [.ciImage(ciImage)],
+                chat: [
+                    .user(prompt, images: [.ciImage(ciImage)])
+                ],
                 processing: .init(resize: CGSize(width: 512, height: 512))
             )
 
