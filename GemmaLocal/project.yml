@@ -1,0 +1,51 @@
+name: GemmaLocal
+options:
+  bundleIdPrefix: com.toneverdo
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.0"
+
+packages:
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    from: "2.30.0"
+  swift-markdown-ui:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    from: "2.4.0"
+
+targets:
+  GemmaLocal:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        INFOPLIST_FILE: Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.toneverdo.gemma-local
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: GemmaLocal.entitlements
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+    dependencies:
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXVLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
+      - package: swift-markdown-ui
+        product: MarkdownUI
+    info:
+      path: Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSPhotoLibraryUsageDescription: "需要访问相册以选择图片进行多模态分析"
+        NSCameraUsageDescription: "需要使用相机拍照进行多模态分析"
