@@ -187,16 +187,25 @@ class LLMService: ObservableObject {
         do {
             // 缩放图片以减少内存占用
             let resized = resizeImage(image, maxDimension: 512)
-            let ciImage = CIImage(image: resized)!
+            
+            // 安全地创建 CIImage，避免强制解包导致崩溃
+            guard let ciImage = CIImage(image: resized) else {
+                isGenerating = false
+                let errorMsg = "图片处理失败：无法创建 CIImage"
+                currentOutput = errorMsg
+                return errorMsg
+            }
 
+            // 使用正确的 VLM API：UserInput(prompt:images:) 
+            // prompt 参数需要是 UserInput.Prompt 类型，使用 .text() 包装
+            // 参考：https://github.com/ml-explore/mlx-swift-examples/releases
             let userInput = UserInput(
-                chat: [
-                    .user(prompt, images: [.ciImage(ciImage)])
-                ],
+                prompt: .text(prompt),
+                images: [.ciImage(ciImage)],
                 processing: .init(resize: CGSize(width: 512, height: 512))
             )
 
-            let stream = try await container.perform { (context: ModelContext) in
+            let stream = try await container.perform { [userInput] (context: ModelContext) in
                 let lmInput = try await context.processor.prepare(input: userInput)
                 return try MLXLMCommon.generate(
                     input: lmInput,
