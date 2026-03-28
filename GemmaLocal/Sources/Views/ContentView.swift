@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var showingImagePicker = false
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     @State private var showingSourceSelector = false
+    @FocusState private var isInputFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -130,7 +131,7 @@ struct ContentView: View {
 
     private var chatView: some View {
         VStack(spacing: 0) {
-            // Messages
+            // Messages — tap to dismiss keyboard
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -188,6 +189,10 @@ struct ContentView: View {
                     }
                     .padding()
                 }
+                .onTapGesture {
+                    isInputFocused = false
+                }
+                .scrollDismissesKeyboard(.interactively)
                 .onChange(of: messages.count) {
                     withAnimation {
                         proxy.scrollTo(messages.last?.id, anchor: .bottom)
@@ -204,35 +209,37 @@ struct ContentView: View {
 
             // Selected image preview
             if let image = selectedImage {
-                HStack {
+                HStack(spacing: 10) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: 60, height: 60)
+                        .frame(width: 52, height: 52)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            // 图片上的删除按钮
+                            Button {
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    selectedImage = nil
+                                }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(.white, .black.opacity(0.5))
+                            }
+                            .offset(x: 8, y: -8),
+                            alignment: .topTrailing
+                        )
 
-                    VStack(alignment: .leading) {
-                        Text("已选择图片")
-                            .font(.caption.bold())
-                        if !llmService.supportsImages {
-                            Text("当前模型不支持图片")
-                                .font(.caption2)
-                                .foregroundColor(.orange)
-                        }
+                    if !llmService.supportsImages {
+                        Label("当前模型不支持图片", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
                     }
 
                     Spacer()
-
-                    Button {
-                        selectedImage = nil
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 6)
-                .background(Color(.systemGray6))
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
             }
 
             // Input bar
@@ -243,23 +250,26 @@ struct ContentView: View {
     // MARK: - Input Bar
 
     private var inputBar: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            // 图片按钮
+        HStack(alignment: .bottom, spacing: 10) {
+            // 图片按钮 — 加大点击区域
             Button {
+                isInputFocused = false
                 showingSourceSelector = true
             } label: {
-                Image(systemName: "photo.badge.plus")
-                    .font(.title3)
-                    .foregroundColor(llmService.supportsImages ? .blue : .gray)
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 20))
+                    .foregroundColor(llmService.supportsImages ? .blue : .gray.opacity(0.5))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
             }
             .disabled(llmService.isGenerating)
             .confirmationDialog("选择图片来源", isPresented: $showingSourceSelector) {
-                Button("相册") {
+                Button("从相册选择") {
                     imagePickerSource = .photoLibrary
                     showingImagePicker = true
                 }
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    Button("相机") {
+                    Button("拍照") {
                         imagePickerSource = .camera
                         showingImagePicker = true
                     }
@@ -270,21 +280,29 @@ struct ContentView: View {
             TextField("输入消息...", text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
-                .padding(10)
+                .focused($isInputFocused)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .background(Color(.systemGray6))
                 .clipShape(RoundedRectangle(cornerRadius: 20))
+                .onSubmit {
+                    if canSend { sendMessage() }
+                }
 
             // 发送按钮
             Button {
                 sendMessage()
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.title)
-                    .foregroundColor(canSend ? .blue : .gray)
+                    .font(.system(size: 30))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundColor(canSend ? .blue : .gray.opacity(0.4))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
             }
             .disabled(!canSend)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(.bar)
         .sheet(isPresented: $showingImagePicker) {
@@ -309,6 +327,7 @@ struct ContentView: View {
 
         inputText = ""
         selectedImage = nil
+        isInputFocused = false
 
         Task {
             let response: String
