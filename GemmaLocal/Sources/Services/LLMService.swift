@@ -121,6 +121,18 @@ class LLMService: ObservableObject {
         currentOutput = ""
     }
 
+    // MARK: - Memory Management
+
+    /// 处理内存压力，在收到内存警告或进入后台时调用
+    func handleMemoryPressure() {
+        // 如果正在生成，不释放模型（避免中断用户操作）
+        guard !isGenerating else { return }
+        
+        // 释放模型以释放内存
+        unloadModel()
+        loadingProgress = "已释放模型以节省内存"
+    }
+
     // MARK: - Generate (Text Only)
 
     func generate(prompt: String) async -> String {
@@ -138,30 +150,59 @@ class LLMService: ObservableObject {
                 ]
             )
 
-            let stream = try await container.perform { (context: ModelContext) in
-                let lmInput = try await context.processor.prepare(input: userInput)
-                return try MLXLMCommon.generate(
-                    input: lmInput,
-                    parameters: GenerateParameters(temperature: 0.7, topP: 0.9),
-                    context: context
-                )
-            }
-
-            var fullOutput = ""
-            for await generation in stream {
-                switch generation {
-                case .chunk(let text):
-                    fullOutput += text
-                    self.currentOutput = fullOutput
-                case .info:
-                    break
-                default:
-                    break
+            let result: String = try await autoreleasepool {
+                let stream = try await container.perform { (context: ModelContext) in
+                    let lmInput = try await context.processor.prepare(input: userInput)
+                    return try MLXLMCommon.generate(
+                        input: lmInput,
+                        parameters: GenerateParameters(
+                            temperature: 0.7,
+                            topP: 0.9,
+                            maxTokens: 512  // 限制最大输出长度，防止内存溢出
+                        ),
+                        context: context
+                    )
                 }
+
+                var fullOutput = ""
+                var tokenCount = 0
+                let maxTokens = 512
+                
+                for await generation in stream {
+                    switch generation {
+                    case .chunk(let text):
+                        fullOutput += text
+                        tokenCount += 1
+                        
+                        // 更新UI（限制频率，减少内存压力）
+                        if tokenCount % 5 == 0 || tokenCount >= maxTokens {
+                            Task { @MainActor in
+                                self.currentOutput = fullOutput
+                            }
+                        }
+                        
+                        // 达到最大token数时停止
+                        if tokenCount >= maxTokens {
+                            fullOutput += "\n\n[已达到最大输出长度]"
+                            break
+                        }
+                    case .info:
+                        break
+                    default:
+                        break
+                    }
+                }
+                
+                // 最后一次更新UI
+                Task { @MainActor in
+                    self.currentOutput = fullOutput
+                }
+                
+                return fullOutput
             }
 
             isGenerating = false
-            return fullOutput
+            return result
         } catch {
             isGenerating = false
             let errorMsg = "生成失败: \(error.localizedDescription)"
@@ -185,50 +226,77 @@ class LLMService: ObservableObject {
         currentOutput = ""
 
         do {
-            // 缩放图片以减少内存占用
-            let resized = resizeImage(image, maxDimension: 512)
-            
-            // 安全地创建 CIImage，避免强制解包导致崩溃
-            guard let ciImage = CIImage(image: resized) else {
-                isGenerating = false
-                let errorMsg = "图片处理失败：无法创建 CIImage"
-                currentOutput = errorMsg
-                return errorMsg
-            }
-
-            // 使用正确的 VLM API：UserInput(prompt:images:) 
-            // prompt 参数需要是 UserInput.Prompt 类型，使用 .text() 包装
-            // 参考：https://github.com/ml-explore/mlx-swift-examples/releases
-            let userInput = UserInput(
-                prompt: .text(prompt),
-                images: [.ciImage(ciImage)],
-                processing: .init(resize: CGSize(width: 512, height: 512))
-            )
-
-            let stream = try await container.perform { [userInput] (context: ModelContext) in
-                let lmInput = try await context.processor.prepare(input: userInput)
-                return try MLXLMCommon.generate(
-                    input: lmInput,
-                    parameters: GenerateParameters(temperature: 0.7, topP: 0.9),
-                    context: context
-                )
-            }
-
-            var fullOutput = ""
-            for await generation in stream {
-                switch generation {
-                case .chunk(let text):
-                    fullOutput += text
-                    self.currentOutput = fullOutput
-                case .info:
-                    break
-                default:
-                    break
+            // 在autoreleasepool中处理，确保内存及时释放
+            let result: String = try await autoreleasepool {
+                // 缩放图片以减少内存占用（降低分辨率以减少内存使用）
+                let resized = resizeImage(image, maxDimension: 224)
+                
+                // 安全地创建 CIImage，避免强制解包导致崩溃
+                guard let ciImage = CIImage(image: resized) else {
+                    return "图片处理失败：无法创建 CIImage"
                 }
+
+                // 使用正确的 VLM API：UserInput(prompt:images:) 
+                // prompt 参数需要是 UserInput.Prompt 类型，使用 .text() 包装
+                // 参考：https://github.com/ml-explore/mlx-swift-examples/releases
+                let userInput = UserInput(
+                    prompt: .text(prompt),
+                    images: [.ciImage(ciImage)],
+                    processing: .init(resize: CGSize(width: 224, height: 224))
+                )
+
+                let stream = try await container.perform { [userInput] (context: ModelContext) in
+                    let lmInput = try await context.processor.prepare(input: userInput)
+                    return try MLXLMCommon.generate(
+                        input: lmInput,
+                        parameters: GenerateParameters(
+                            temperature: 0.7,
+                            topP: 0.9,
+                            maxTokens: 256  // 图片模式限制更严格
+                        ),
+                        context: context
+                    )
+                }
+
+                var fullOutput = ""
+                var tokenCount = 0
+                let maxTokens = 256
+                
+                for await generation in stream {
+                    switch generation {
+                    case .chunk(let text):
+                        fullOutput += text
+                        tokenCount += 1
+                        
+                        // 限制UI更新频率
+                        if tokenCount % 3 == 0 || tokenCount >= maxTokens {
+                            Task { @MainActor in
+                                self.currentOutput = fullOutput
+                            }
+                        }
+                        
+                        // 达到最大token数时停止
+                        if tokenCount >= maxTokens {
+                            fullOutput += "\n\n[已达到最大输出长度]"
+                            break
+                        }
+                    case .info:
+                        break
+                    default:
+                        break
+                    }
+                }
+                
+                // 最后一次更新UI
+                Task { @MainActor in
+                    self.currentOutput = fullOutput
+                }
+                
+                return fullOutput
             }
 
             isGenerating = false
-            return fullOutput
+            return result
         } catch {
             isGenerating = false
             let errorMsg = "生成失败: \(error.localizedDescription)"
